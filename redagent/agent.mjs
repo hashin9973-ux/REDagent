@@ -11,11 +11,13 @@
 //     with Undo; calls that may change the game ask the player first.
 
 import { agent, channel, kernel, pkg, secrets } from 'rednode';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { diffLines } from './diff.mjs';
 import { pathToFileURL } from 'node:url';
 import { findSdk, installSdk, SDK_VERSION } from './sdk.mjs';
+import { runOpenAICompatibleTurn } from './openai-agent.mjs';
+import { callRednodeTool, listRednodeTools } from './local-mcp.mjs';
 
 // The Claude Agent SDK is fetched on the player's PC at first start (sdk.mjs): until then
 // the window shows Get the Agent SDK, and questions are refused with a message.
@@ -59,6 +61,7 @@ function getSdk() {
 }
 
 const KEY = 'anthropic-api-key';
+const LOCAL_KEY = 'openai-compatible-api-key';
 const MODELS = [
   { id: 'claude-opus-5-5', name: 'Opus 5.5' },
   { id: 'claude-sonnet-5-5', name: 'Sonnet 5.5' },
@@ -103,7 +106,14 @@ function readSettings() {
     return {};
   }
 }
-const settings = { model: MODELS[0].id, ...readSettings() };
+const settings = {
+  provider: 'anthropic',
+  model: MODELS[0].id,
+  localBaseUrl: 'http://127.0.0.1:5001/v1',
+  localModel: 'local-model',
+  ...readSettings(),
+};
+if (!['anthropic', 'openai-compatible'].includes(settings.provider)) settings.provider = 'anthropic';
 const saveSettings = () => writeFileSync(SETTINGS, JSON.stringify(settings, null, 2));
 
 let sessionId = null; // the chat's Claude Code session, resumed turn after turn
@@ -125,7 +135,7 @@ const notes = []; // told to Claude at the start of the next turn, such as an un
 let chat = newChat();
 
 function newChat() {
-  return { id: `${Date.now()}`, title: '', created: Date.now(), updated: Date.now(), events: [] };
+  return { id: `${Date.now()}`, title: '', created: Date.now(), updated: Date.now(), events: [], messages: [] };
 }
 
 function saveChat() {
@@ -162,7 +172,7 @@ function forgetOldChats() {
 // Makes a saved chat the current one.
 function openChat(id) {
   const c = JSON.parse(readFileSync(chatFile(id), 'utf8'));
-  chat = { id: c.id, title: c.title, created: c.created, updated: c.updated, events: c.events ?? [] };
+  chat = { id: c.id, title: c.title, created: c.created, updated: c.updated, events: c.events ?? [], messages: c.messages ?? [] };
   sessionId = c.sessionId ?? null;
   chatCost = c.cost ?? 0;
   notes.length = 0;
@@ -256,8 +266,10 @@ async function status() {
   post({
     type: 'status',
     sdk: query ? 'ready' : sdkJob ? 'getting' : 'missing',
-    hasKey: !!(await secrets.get(KEY)),
-    model: settings.model,
+    provider: settings.provider,
+    baseUrl: settings.localBaseUrl,
+    hasKey: settings.provider === 'openai-compatible' ? true : !!(await secrets.get(KEY)),
+    model: settings.provider === 'openai-compatible' ? settings.localModel : settings.model,
     models: MODELS,
     cost: chatCost,
     busy: !!running,
@@ -469,7 +481,7 @@ async function canUseTool(name, input, { signal, toolUseID }) {
   if (WRITE_TOOLS.includes(name)) return confirmChange(name, input, toolUseID, signal);
   const t = name.startsWith(KERNEL) ? name.slice(KERNEL.length) : null;
   if (t === 'apps' && (!input.action || input.action === 'list')) return { behavior: 'allow', updatedInput: input };
-  if (t === 'api_call' || t === 'apps' || t === 'archives_reload') {
+  if (t === 'api_call' || t === 'apps' || t === 'archives_reload' || t === 'game_facts_set' || t === 'game_journal_set' || t === 'game_teleport') {
     const ok = await askPlayer(describe(name, input), signal);
     return ok
       ? { behavior: 'allow', updatedInput: input }
@@ -521,7 +533,329 @@ function sessionExists(id) {
   return readdirSync(projects).some((d) => existsSync(join(projects, d, `${id}.jsonl`)));
 }
 
+
+// ---------- OpenAI-compatible provider ----------
+// These tools are deliberately narrow: no shell, package installation, or arbitrary
+// filesystem access is offered to the model. All writes use the same review/backup
+// path as the Claude provider.
+
+const LOCAL_FILE_TOOLS = [
+  {
+    name: 'file_read',
+    label: 'Read',
+    kind: 'file',
+    logicalName: 'Read',
+    description: 'Read a UTF-8 file in a REDnode apps folder. Paths are relative to the first apps folder unless absolute.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string' }, startLine: { type: 'integer', minimum: 1 }, endLine: { type: 'integer', minimum: 1 } }, required: ['path'] },
+  },
+  {
+    name: 'file_glob',
+    label: 'Glob',
+    kind: 'file',
+    logicalName: 'Glob',
+    description: 'List matching files in the REDnode apps folders. Use patterns such as **/*.mjs or **/rednode-app.json.',
+    inputSchema: { type: 'object', properties: { pattern: { type: 'string' }, path: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 300 } }, required: ['pattern'] },
+  },
+  {
+    name: 'file_grep',
+    label: 'Grep',
+    kind: 'file',
+    logicalName: 'Grep',
+    description: 'Search text files in the REDnode apps folders for a literal, case-insensitive phrase. Returns file paths, line numbers and matching lines.',
+    inputSchema: { type: 'object', properties: { query: { type: 'string' }, path: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 100 } }, required: ['query'] },
+  },
+  {
+    name: 'file_write',
+    label: 'Write',
+    kind: 'file',
+    logicalName: 'Write',
+    description: 'Create or replace a UTF-8 file inside a REDnode apps folder. The player must approve the diff before it is written.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] },
+  },
+  {
+    name: 'file_edit',
+    label: 'Edit',
+    kind: 'file',
+    logicalName: 'Edit',
+    description: 'Replace an exact string in a UTF-8 file inside a REDnode apps folder. The player must approve the diff before it is written.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string' }, old_text: { type: 'string' }, new_text: { type: 'string' }, replace_all: { type: 'boolean' } }, required: ['path', 'old_text', 'new_text'] },
+  },
+];
+
+function localSystemPrompt() {
+  return briefing()
+    .replace(/powered by Claude/gi, 'powered by the configured OpenAI-compatible model')
+    + '\n\n# Local model rules\n'
+    + '- Use the supplied file and REDnode tools; do not invent game API names or signatures.\n'
+    + '- Look up a game function with gameapi_lookup before calling or coding against it.\n'
+    + '- Read existing manifests and code before changing a mod.\n'
+    + '- Keep changes small. Wait for hot reload, then inspect logs or window output to verify the result.\n'
+    + '- You have no shell, process execution, or package-installation tool.\n'
+    + '- Image tools are not available in this local-model path yet; do not claim to have seen screenshots.\n'
+    + '- Never claim a mod works unless tool results provide evidence.\n';
+}
+
+function safeAppsPath(value, cwd = APPS_DIRS[0]) {
+  const raw = String(value ?? '').trim();
+  if (!raw) throw new Error('A file path is required.');
+  const full = isAbsolute(raw) ? resolve(raw) : resolve(cwd, raw);
+  if (!insideApps(full, cwd)) throw new Error('REDagent may only access files inside the REDnode apps folders.');
+  return full;
+}
+
+function globRegex(pattern) {
+  let s = String(pattern ?? '**/*').replace(/\\/g, '/');
+  let out = '^';
+  for (let i = 0; i < s.length; i += 1) {
+    const c = s[i];
+    if (c === '*' && s[i + 1] === '*') {
+      i += 1;
+      if (s[i + 1] === '/') { i += 1; out += '(?:.*/)?'; }
+      else out += '.*';
+    } else if (c === '*') out += '[^/]*';
+    else if (c === '?') out += '[^/]';
+    else out += c.replace(/[|\\{}()[\]^$+?.]/g, '\\$&');
+  }
+  return new RegExp(out + '$', 'i');
+}
+
+function listLocalFiles(startDir, maxFiles = 1200) {
+  const found = [];
+  const stack = [startDir];
+  while (stack.length && found.length < maxFiles) {
+    const dir = stack.pop();
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+    for (const entry of entries) {
+      if (entry.name === '.git' || entry.name === 'node_modules' || entry.name === '.cache') continue;
+      const full = join(dir, entry.name);
+      if (!insideApps(full, APPS_DIRS[0]) || entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) stack.push(full);
+      else if (entry.isFile()) found.push(full);
+      if (found.length >= maxFiles) break;
+    }
+  }
+  return { files: found, truncated: stack.length > 0 };
+}
+
+function executeLocalFileRead(args) {
+  const file = safeAppsPath(args.path);
+  if (!existsSync(file)) throw new Error('File does not exist: ' + args.path);
+  const stat = (awaitStat(file));
+  if (!stat.isFile()) throw new Error('Not a file: ' + args.path);
+  if (stat.size > 2_000_000) throw new Error('File exceeds the 2 MB read limit.');
+  const text = readFileSync(file, 'utf8');
+  const lines = text.split(/\r?\n/);
+  const start = Math.max(1, Number(args.startLine) || 1);
+  const end = Math.min(lines.length, Number(args.endLine) || lines.length);
+  if (end < start) throw new Error('endLine must be greater than or equal to startLine.');
+  return lines.slice(start - 1, end).map((line, i) => String(start + i).padStart(5) + ': ' + line).join('\n');
+}
+
+function awaitStat(file) {
+  // statSync is imported lazily below through the synchronous fs namespace-free import.
+  return statSync(file);
+}
+
+function executeLocalGlob(args) {
+  const root = safeAppsPath(args.path || '.');
+  if (!existsSync(root)) throw new Error('Directory does not exist: ' + (args.path || '.'));
+  const stat = statSync(root);
+  const files = stat.isDirectory() ? listLocalFiles(root) : { files: [root], truncated: false };
+  const regex = globRegex(args.pattern || '**/*');
+  const limit = Math.max(1, Math.min(300, Number(args.limit) || 100));
+  const matched = files.files.filter((file) => regex.test(relative(root, file).replace(/\\/g, '/')));
+  return matched.slice(0, limit).map(shortPath).join('\n') + (matched.length > limit || files.truncated ? '\n[results truncated]' : '');
+}
+
+function executeLocalGrep(args) {
+  const query = String(args.query ?? '');
+  if (!query) throw new Error('A non-empty search query is required.');
+  const root = safeAppsPath(args.path || '.');
+  if (!existsSync(root)) throw new Error('Path does not exist: ' + (args.path || '.'));
+  const stat = statSync(root);
+  const files = stat.isDirectory() ? listLocalFiles(root) : { files: [root], truncated: false };
+  const needle = query.toLocaleLowerCase();
+  const limit = Math.max(1, Math.min(100, Number(args.limit) || 50));
+  const matches = [];
+  for (const file of files.files) {
+    let size;
+    try { size = statSync(file).size; } catch { continue; }
+    if (size > 1_000_000) continue;
+    let content;
+    try { content = readFileSync(file, 'utf8'); } catch { continue; }
+    if (content.includes('\0')) continue;
+    const lines = content.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i += 1) {
+      if (lines[i].toLocaleLowerCase().includes(needle)) {
+        matches.push(shortPath(file) + ':' + (i + 1) + ': ' + lines[i].slice(0, 500));
+        if (matches.length >= limit) return matches.join('\n') + '\n[results capped at ' + limit + ']';
+      }
+    }
+  }
+  return matches.length ? matches.join('\n') : 'No matches.';
+}
+
+function localToolInput(descriptor, args) {
+  switch (descriptor.name) {
+    case 'file_read': return { file_path: args.path };
+    case 'file_glob': return { pattern: args.pattern, path: args.path || '.' };
+    case 'file_grep': return { pattern: args.query, path: args.path || '.' };
+    case 'file_write': return { file_path: args.path, content: args.content };
+    case 'file_edit': return { file_path: args.path, old_string: args.old_text, new_string: args.new_text, replace_all: !!args.replace_all };
+    default: return args;
+  }
+}
+
+async function executeLocalTool(descriptor, args, connection, signal, toolUseID) {
+  if (signal?.aborted) throw new Error('Stopped.');
+  if (descriptor.kind === 'rednode') {
+    const internalName = KERNEL + descriptor.actualName;
+    const decision = await canUseTool(internalName, args, { signal, toolUseID });
+    if (decision.behavior !== 'allow') throw new Error(decision.message || 'Tool call denied.');
+    const result = await callRednodeTool(connection, descriptor.actualName, decision.updatedInput ?? args, signal);
+    if (result.startsWith('Tool error:')) throw new Error(result.slice('Tool error:'.length).trim());
+    return result;
+  }
+
+  const input = localToolInput(descriptor, args);
+  let target = null;
+  if (['Read', 'Write', 'Edit'].includes(descriptor.logicalName)) {
+    target = safeAppsPath(input.file_path);
+    input.file_path = target;
+  } else if (descriptor.logicalName === 'Glob' || descriptor.logicalName === 'Grep') {
+    input.path = safeAppsPath(input.path || '.');
+    target = input.path;
+  }
+  if (descriptor.logicalName === 'Write' || descriptor.logicalName === 'Edit') {
+    const reason = writable(input.file_path);
+    if (reason) throw new Error(reason);
+  }
+
+  const decision = await canUseTool(descriptor.logicalName, input, { signal, toolUseID });
+  if (decision.behavior !== 'allow') throw new Error(decision.message || 'Tool call denied.');
+
+  if (descriptor.name === 'file_read') return executeLocalFileRead(args);
+  if (descriptor.name === 'file_glob') return executeLocalGlob(args);
+  if (descriptor.name === 'file_grep') return executeLocalGrep(args);
+  if (descriptor.name === 'file_write') {
+    const file = safeAppsPath(args.path);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, String(args.content ?? ''), 'utf8');
+    return 'Wrote ' + shortPath(file);
+  }
+  if (descriptor.name === 'file_edit') {
+    const file = safeAppsPath(args.path);
+    if (!existsSync(file) || !statSync(file).isFile()) throw new Error('File does not exist: ' + args.path);
+    const before = readFileSync(file, 'utf8');
+    const oldText = String(args.old_text ?? '');
+    if (!oldText) throw new Error('old_text must not be empty.');
+    if (!before.includes(oldText)) throw new Error('The exact old_text was not found; read the file and retry with an exact snippet.');
+    const after = args.replace_all ? before.split(oldText).join(String(args.new_text ?? '')) : before.replace(oldText, () => String(args.new_text ?? ''));
+    writeFileSync(file, after, 'utf8');
+    return 'Edited ' + shortPath(file);
+  }
+  throw new Error('Unknown local tool: ' + descriptor.name);
+}
+
+function localToolDescriptors(connection, mcpTools) {
+  const descriptors = [...LOCAL_FILE_TOOLS];
+  for (const tool of mcpTools ?? []) {
+    if (!tool?.name || ['game_image', 'window_image'].includes(tool.name)) continue;
+    const name = 'rednode_' + String(tool.name).replace(/[^a-zA-Z0-9_-]/g, '_');
+    descriptors.push({
+      name,
+      label: 'REDnode · ' + tool.name,
+      kind: 'rednode',
+      actualName: tool.name,
+      description: String(tool.description ?? 'REDnode tool') + ' Use the real game/runtime result; do not guess.',
+      inputSchema: tool.inputSchema ?? { type: 'object', properties: {} },
+    });
+  }
+  return descriptors;
+}
+
+async function askOpenAICompatible(text) {
+  if (running) return;
+  const apiKey = await secrets.get(LOCAL_KEY) || '';
+  ensureWorkDir();
+
+  if (!chat.title) chat.title = text.replace(/\s+/g, ' ').slice(0, 60);
+  chat.events.push({ type: 'user', text });
+  if (chat.events.length === 1) forgetOldChats();
+  saveChat();
+
+  running = new AbortController();
+  post({ type: 'turn-start' });
+  console.log('Turn with OpenAI-compatible model ' + settings.localModel);
+  let connection = null;
+  let descriptors = [...LOCAL_FILE_TOOLS];
+  const byName = new Map(descriptors.map((tool) => [tool.name, tool]));
+  try {
+    try {
+      connection = await kernel.mcp();
+      const mcpTools = await listRednodeTools(connection, running.signal);
+      descriptors = localToolDescriptors(connection, mcpTools);
+      for (const tool of descriptors) byName.set(tool.name, tool);
+    } catch (err) {
+      connection = null;
+      post({ type: 'notice', text: "Without REDnode's tools: " + err.message });
+    }
+
+    post({ type: 'notice', text: 'Local provider mode: image-returning tools are disabled; text tools and reviewed file edits are available.' });
+    const result = await runOpenAICompatibleTurn({
+      baseUrl: settings.localBaseUrl,
+      apiKey,
+      model: settings.localModel,
+      systemPrompt: localSystemPrompt(),
+      history: Array.isArray(chat.messages) ? chat.messages : [],
+      prompt: text,
+      tools: descriptors,
+      signal: running.signal,
+      executeTool: (name, args, ctx) => {
+        const descriptor = byName.get(name);
+        if (!descriptor) throw new Error('Unknown tool: ' + name);
+        if (descriptor.kind === 'rednode' && !connection) throw new Error("REDnode's tools are unavailable for this turn.");
+        return executeLocalTool(descriptor, args, connection, ctx.signal, ctx.toolUseID);
+      },
+      onText: (delta) => {
+        post({ type: 'delta', text: delta });
+        // Make the first local-model text event explicit for the chat renderer.
+        // post() records deltas as a new text block when the previous event isn't text.
+      },
+      onToolStart: ({ id, name, input }) => {
+        const label = byName.get(name)?.label ?? name;
+        post({ type: 'tool', id, name: label });
+        const summary = JSON.stringify(input ?? {});
+        post({ type: 'tool-input', id, name: label, input: summary.length > 180 ? summary.slice(0, 177) + '...' : summary });
+      },
+      onToolDone: ({ id, error }) => {
+        post({ type: 'tool-done', id, error });
+        const edit = edits.get(id);
+        if (edit) {
+          if (error) edits.delete(id);
+          else post({ type: 'changed', id: edit.id, file: shortPath(edit.file), created: edit.created });
+        }
+      },
+    });
+    chat.messages = result.messages.filter((message) => message.role !== 'system');
+    saveChat();
+    post({ type: 'turn-end', error: null, cost: 0, chatCost });
+  } catch (err) {
+    const message = running?.signal.aborted ? 'Stopped.' : String(err?.message ?? err).replaceAll(apiKey, '***');
+    post({ type: 'turn-end', error: message, cost: 0, chatCost });
+  } finally {
+    running = null;
+    for (const event of chat.events) {
+      if ((event.type === 'confirm' || event.type === 'change') && !event.answer) event.answer = 'Not answered';
+    }
+    saveChat();
+    status();
+  }
+}
+
 async function ask(text) {
+  if (settings.provider === 'openai-compatible') return askOpenAICompatible(text);
   if (running) return;
   if (!query) {
     post({ type: 'error', text: 'Get the Claude Agent SDK first.' });
@@ -646,6 +980,34 @@ channel.on(async (msg) => {
         }
         await secrets.set(KEY, key);
         console.log('API key saved (encrypted)');
+        await status();
+        break;
+      }
+      case 'save-provider': {
+        const provider = String(msg.provider ?? 'anthropic');
+        if (!['anthropic', 'openai-compatible'].includes(provider)) throw new Error('Unknown provider.');
+        const baseUrl = String(msg.baseUrl ?? '').trim();
+        const localModel = String(msg.localModel ?? '').trim();
+        if (provider === 'openai-compatible') {
+          let parsed;
+          try { parsed = new URL(baseUrl); } catch { throw new Error('Enter a valid OpenAI-compatible API base URL.'); }
+          if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('The API URL must use HTTP or HTTPS.');
+          if (!localModel) throw new Error('Enter the model name expected by your inference server.');
+          settings.localBaseUrl = baseUrl;
+          settings.localModel = localModel;
+          const apiKey = String(msg.apiKey ?? '').trim();
+          if (apiKey) await secrets.set(LOCAL_KEY, apiKey);
+        }
+        settings.provider = provider;
+        saveSettings();
+        // A provider change starts a fresh model context. Visible chat history remains.
+        sessionId = null;
+        chat.messages = [];
+        chatCost = 0;
+        trustEdits = false;
+        saveChat();
+        post({ type: 'provider-saved' });
+        post({ type: 'notice', text: 'Provider changed. The visible chat remains, but model context starts fresh.' });
         await status();
         break;
       }
