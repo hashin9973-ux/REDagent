@@ -428,13 +428,13 @@ function handle(m) {
     case 'status':
       state = m;
       show();
+      if (m.hasKey && m.tools !== 'ok' && !log.querySelector('.notice.tools')) {
+        add(div('notice tools', esc(`REDnode's tools are off: ${m.tools}`)));
+      }
       break;
     case 'provider-saved':
       editingProvider = false;
       show();
-      if (m.hasKey && m.tools !== 'ok' && !log.querySelector('.notice.tools')) {
-        add(div('notice tools', esc(`REDnode's tools are off: ${m.tools}`)));
-      }
       break;
     case 'turn-start':
       state.busy = true;
