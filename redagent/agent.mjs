@@ -1201,6 +1201,9 @@ function modBriefing(from) {
 let modQueue = Promise.resolve();
 
 async function answerMod(req, st) {
+  if (settings.provider === 'openai-compatible') {
+    throw new Error('Questions from other mods are currently disabled in OpenAI-compatible mode because their dollar spending limits cannot be reliably enforced. Switch to Anthropic to use budget-limited mod answers.');
+  }
   if (!query) throw new Error('REDagent does not have the Claude Agent SDK yet. The player gets it in the REDagent window.');
   const key = await secrets.get(KEY);
   if (!key) throw new Error('REDagent has no API key yet. The player adds it in the REDagent window.');
