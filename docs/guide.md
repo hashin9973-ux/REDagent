@@ -39,7 +39,7 @@ It sees the game's screen only when it takes a picture, which it does when it ne
 
 Click **Provider** in the footer. Choose **Anthropic Claude** to keep the original provider, or **OpenAI-compatible API (local or hosted)** to use a compatible chat-completions server.
 
-For an OpenAI-compatible server, enter its base URL (for example `http://127.0.0.1:5001/v1` for a local KoboldCpp server configured on that port) and the exact model ID the server expects. The API key is optional for local servers. If you enter one, REDnode stores it encrypted. Non-local endpoints must use HTTPS.
+For an OpenAI-compatible server, enter its base URL (for example `http://127.0.0.1:5001/v1` for a local KoboldCpp server configured on that port) and the exact model ID the server expects. The API key is optional for local servers. If you enter one, REDnode stores it encrypted; saving with the field blank clears a previously saved local-provider key. Non-local endpoints must use HTTPS.
 
 The local agent sends function/tool definitions and handles tool calls through REDnode's MCP server. It retrieves relevant documentation and existing mod source at the start of each turn; this provides temporary context, not model training. Tool calling varies by model and server, so first verify that a read-only tool works before asking it to change a mod.
 
