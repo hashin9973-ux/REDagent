@@ -11,11 +11,15 @@ const TEXT_EXTENSIONS = new Set([
 ]);
 const SKIP_DIRS = new Set([
   '.git', 'node_modules', '.cache', 'backups', 'chats', 'sdk', 'coverage',
-  'dist', 'build', '.next', '.idea', '.vscode',
+  'dist', 'build', '.next', '.idea', '.vscode', 'secrets', 'saves', 'logs',
 ]);
-const MAX_FILE_BYTES = 180_000;
-const MAX_INDEX_FILES = 700;
+const MAX_FILE_BYTES = 100_000;
+const MAX_INDEX_FILES = 250;
+const MAX_INDEX_CHARS = 4_000_000;
 const DEFAULT_MAX_CHARS = 11_000;
+const SENSITIVE_NAME = /(?:^|[._-])(secret|secrets|credential|credentials|token|password|passwd|auth|apikey|api-key|private)(?:[._-]|$)/i;
+const JSON_ALLOWLIST = new Set(['rednode-app.json', 'package.json', 'tsconfig.json', 'manifest.json']);
+const SENSITIVE_VALUE = /(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|authorization)\s*["']?\s*[:=]\s*["'][^"'\r\n]{8,}["']/i;
 const STOP_WORDS = new Set((
   'about after again against also any are as at be because been before being below between both ' +
   'but by can could did do does doing down during each either else for from further get give had ' +
@@ -33,10 +37,14 @@ function inside(root, path) {
 
 function readTextFile(file) {
   try {
+    const name = basename(file).toLowerCase();
+    if (SENSITIVE_NAME.test(name)) return null;
+    if (extname(name) === '.json' && !JSON_ALLOWLIST.has(name)) return null;
     const stat = statSync(file);
     if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_FILE_BYTES) return null;
     const content = readFileSync(file, 'utf8');
-    return content.includes('\0') ? null : content;
+    if (content.includes('\0') || SENSITIVE_VALUE.test(content)) return null;
+    return content;
   } catch {
     return null;
   }
@@ -46,7 +54,8 @@ function gather(root, output, visited, excludeRoots, skipDirectories) {
   const start = resolve(root);
   if (!existsSync(start)) return;
   const stack = [start];
-  while (stack.length && output.length < MAX_INDEX_FILES) {
+  let totalChars = output.reduce((sum, file) => sum + file.content.length, 0);
+  while (stack.length && output.length < MAX_INDEX_FILES && totalChars < MAX_INDEX_CHARS) {
     const current = stack.pop();
     if (skipDirectories.some((excluded) => current === resolve(excluded))) continue;
     let entries;
@@ -62,8 +71,11 @@ function gather(root, output, visited, excludeRoots, skipDirectories) {
         if (!TEXT_EXTENSIONS.has(ext) || visited.has(full) || excludeRoots.some((excluded) => inside(excluded, full))) continue;
         visited.add(full);
         const content = readTextFile(full);
-        if (content !== null) output.push({ path: full, content });
-        if (output.length >= MAX_INDEX_FILES) break;
+        if (content !== null) {
+          output.push({ path: full, content });
+          totalChars += content.length;
+        }
+        if (output.length >= MAX_INDEX_FILES || totalChars >= MAX_INDEX_CHARS) break;
       }
     }
   }
