@@ -10,6 +10,23 @@ How to keep it (the Edgemodders convention):
 
 ## Unreleased
 
+**New**
+
+- An experimental OpenAI-compatible provider for local or hosted chat-completions servers, selectable in the in-game **Provider** panel.
+- A separate local agent loop with streaming replies, function/tool calling and REDnode MCP tools, without using the Claude Agent SDK for player chat.
+- Retrieves relevant REDnode guidance and existing mod examples into the current prompt instead of trying to fit the whole ecosystem in every request.
+- Adds CI syntax checks and unit tests for streaming/tool calls, the REDnode MCP client and knowledge retrieval.
+
+**Changed**
+
+- The local provider uses its own base URL, model ID and optional encrypted API key. Non-local endpoints must use HTTPS.
+- Local file tools reject symlink traversal, keep reads/writes inside REDnode apps folders, and continue to require reviewed diffs before writes.
+
+**Other**
+
+- The local provider is experimental and still needs a real in-game test against the selected inference server. Screenshot/vision tools are not forwarded, and other mods' dollar-budgeted `agent.ask` requests are disabled in this mode because cost limits cannot be reliably enforced.
+
+
 ## 0.3.0 (2026-10-23)
 
 The first release, for game version 2.31. REDagent is an assistant inside Cyberpunk 2077, powered by Claude, that writes, runs, checks and fixes REDnode mods with you while you play. It uses your own Anthropic API key.
