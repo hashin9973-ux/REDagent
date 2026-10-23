@@ -841,7 +841,11 @@ async function askOpenAICompatible(text) {
       apiKey,
       model: settings.localModel,
       systemPrompt: (() => {
-        const knowledge = retrieveKnowledge(text, {
+        const retrievalQuery = [
+          ...chat.messages.filter((message) => message.role === 'user').slice(-3).map((message) => message.content),
+          text,
+        ].filter((part) => typeof part === 'string').join('\n');
+        const knowledge = retrieveKnowledge(retrievalQuery, {
           files: [join(pkg.dir, 'briefing.md')],
           roots: [join(pkg.dir, 'briefing'), ...APPS_DIRS],
           skipDirectories: [pkg.dir],
