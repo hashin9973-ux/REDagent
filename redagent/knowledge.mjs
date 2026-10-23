@@ -20,6 +20,7 @@ const DEFAULT_MAX_CHARS = 11_000;
 const SENSITIVE_NAME = /(?:^|[._-])(secret|secrets|credential|credentials|token|password|passwd|auth|apikey|api-key|private)(?:[._-]|$)/i;
 const JSON_ALLOWLIST = new Set(['rednode-app.json', 'package.json', 'tsconfig.json', 'manifest.json']);
 const SENSITIVE_VALUE = /(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|authorization)\s*["']?\s*[:=]\s*["'][^"'\r\n]{8,}["']/i;
+const SENSITIVE_TOKEN = /\b(?:sk-ant-api\d{2}-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{24,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,})\b|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/;
 const STOP_WORDS = new Set((
   'about after again against also any are as at be because been before being below between both ' +
   'but by can could did do does doing down during each either else for from further get give had ' +
@@ -43,7 +44,7 @@ function readTextFile(file) {
     const stat = statSync(file);
     if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_FILE_BYTES) return null;
     const content = readFileSync(file, 'utf8');
-    if (content.includes('\0') || SENSITIVE_VALUE.test(content)) return null;
+    if (content.includes('\0') || SENSITIVE_VALUE.test(content) || SENSITIVE_TOKEN.test(content)) return null;
     return content;
   } catch {
     return null;
