@@ -1039,6 +1039,7 @@ channel.on(async (msg) => {
           let parsed;
           try { parsed = new URL(baseUrl); } catch { throw new Error('Enter a valid OpenAI-compatible API base URL.'); }
           if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('The API URL must use HTTP or HTTPS.');
+          if (parsed.username || parsed.password) throw new Error('Do not put credentials in the URL; use the API key field.');
           if (parsed.search || parsed.hash) throw new Error('Put authentication in the API key field, not the URL query or fragment.');
           const isLoopback = ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname.toLowerCase());
           if (parsed.protocol === 'http:' && !isLoopback) throw new Error('Use HTTPS for non-local endpoints so the API key is not sent in cleartext.');
