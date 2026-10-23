@@ -22,6 +22,7 @@ test('retrieves relevant source snippets and respects configured limits', (t) =>
     apiKey: 'supersecret-test-token-value',
   }));
   writeFileSync(join(root, 'mods', 'hud-health', 'private-token.mjs'), "export const token = 'supersecret-test-token-value';");
+  writeFileSync(join(root, 'mods', 'hud-health', 'config.mjs'), "export const accidentalKey = 'sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345';");
 
   const result = retrieveKnowledge('create a health HUD with a threshold', {
     roots: [root],
@@ -32,5 +33,6 @@ test('retrieves relevant source snippets and respects configured limits', (t) =>
   assert.match(result, /hud-health/);
   assert.match(result, /threshold/);
   assert.doesNotMatch(result, /supersecret-test-token-value/);
+  assert.doesNotMatch(result, /sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345/);
   assert.ok(result.length <= 2_000);
 });
