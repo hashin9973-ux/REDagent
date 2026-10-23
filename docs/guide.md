@@ -4,7 +4,7 @@ title: Guide
 
 # RED<span class="y">agent</span> guide
 
-REDagent is an assistant inside Cyberpunk 2077 that writes, runs, checks and fixes [REDnode](https://edgemodders.github.io/REDnode/) mods with you while you play. You talk to it in a chat window drawn over the game. It is powered by Claude and uses your own Anthropic API key.
+REDagent is an assistant inside Cyberpunk 2077 that writes, runs, checks and fixes [REDnode](https://edgemodders.github.io/REDnode/) mods with you while you play. You talk to it in a chat window drawn over the game. Claude is the default provider. This fork also offers an experimental OpenAI-compatible provider for local or hosted models.
 
 > "Make me a mod that warns me when V's health drops below 30%."
 
@@ -30,9 +30,20 @@ It sees the game's screen only when it takes a picture, which it does when it ne
 | You need | Why |
 |---|---|
 | Cyberpunk 2077 on PC, **game version 2.31**, with [REDnode](https://github.com/Edgemodders/REDnode/releases) 0.32.1 or later installed | REDagent is a REDnode package. REDnode draws its window and gives it the game's tools. Game version 2.5 is not supported yet: REDnode and REDagent move to it once RED4ext, redscript and Codeware support it |
-| Your own Anthropic API key | REDagent calls Claude with your key, and Anthropic bills you for what you use. Get one at [console.anthropic.com](https://console.anthropic.com/) under API keys. No key ships with REDagent. A Claude.ai subscription cannot be used |
-| About 300 MB of disk, and a 140 MB download at first start | REDagent runs on Anthropic's Claude Agent SDK. It is not in REDagent's zip: REDagent downloads it once, when you press **Get the Agent SDK** |
+| A model provider | The default Claude provider needs your own Anthropic API key. This fork can instead use an OpenAI-compatible chat-completions endpoint. |
+| For Claude: about 300 MB of disk and a 140 MB SDK download | The Claude provider downloads Anthropic's Agent SDK at first start. The OpenAI-compatible provider does not need that SDK. |
 | About 120 MB of memory while the game runs | REDagent runs in its own Node process, outside the game |
+
+
+## Choosing the model provider (this fork)
+
+Click **Provider** in the footer. Choose **Anthropic Claude** to keep the original provider, or **OpenAI-compatible API (local or hosted)** to use a compatible chat-completions server.
+
+For an OpenAI-compatible server, enter its base URL (for example `http://127.0.0.1:5001/v1` for a local KoboldCpp server configured on that port) and the exact model ID the server expects. The API key is optional for local servers. If you enter one, REDnode stores it encrypted; saving with the field blank clears a previously saved local-provider key. Non-local endpoints must use HTTPS.
+
+The local agent sends function/tool definitions and handles tool calls through REDnode's MCP server. It retrieves relevant documentation and existing mod source at the start of each turn; this provides temporary context, not model training. Tool calling varies by model and server, so first verify that a read-only tool works before asking it to change a mod.
+
+**Current local-provider limitations:** screenshot/vision tools are not forwarded, dollar usage is not displayed, and requests from other mods through `agent.ask` are disabled because the configured endpoint cannot provide a dependable dollar cost for enforcing their per-mod spending limits. This provider path is experimental and has not yet been verified in-game against every compatible server.
 
 ## Install
 
@@ -43,11 +54,11 @@ To install from source instead, for working on REDagent itself: deploy REDnode f
 
 ## The Claude Agent SDK
 
-REDagent runs on Anthropic's Claude Agent SDK. The SDK is Anthropic's, not open source, so REDagent does not ship it. At first start the REDagent window shows **Get the Agent SDK**. Pressing it downloads Anthropic's own packages from npm, a pinned version of about 140 MB, and checks each against npm's integrity hash before unpacking it into `%APPDATA%\@rednode\overlay\packages\redagent\sdk`. A download that fails or does not match is thrown away, and you can press the button again. Its use is subject to [Anthropic's terms](https://code.claude.com/docs/en/legal-and-compliance).
+The **Anthropic provider** runs on Anthropic's Claude Agent SDK. The OpenAI-compatible provider uses REDagent's own HTTP/tool loop instead. The SDK is Anthropic's, not open source, so REDagent does not ship it. At first start the REDagent window shows **Get the Agent SDK**. Pressing it downloads Anthropic's own packages from npm, a pinned version of about 140 MB, and checks each against npm's integrity hash before unpacking it into `%APPDATA%\@rednode\overlay\packages\redagent\sdk`. A download that fails or does not match is thrown away, and you can press the button again. Its use is subject to [Anthropic's terms](https://code.claude.com/docs/en/legal-and-compliance).
 
 ## First run
 
-1. Start the game. The REDagent window opens on the right. Press **Get the Agent SDK** and wait for it to finish. Then it asks for your key.
+1. Start the game. To use Claude, press **Get the Agent SDK** and then enter your Anthropic API key. To use another backend, click **Provider** in the footer and configure the OpenAI-compatible endpoint; that path skips the SDK download.
 2. Press **F10** to open the REDnode launcher. Find REDagent and switch **Allowed** on for "REDnode's tools for AI agents". Without this, REDagent can still chat and read your mods' files, but it cannot see the Mod log, the game or overlay windows.
 3. Copy your API key. Click the key field in REDagent, press **Ctrl+V**, then **Save key**. The chat appears.
 4. Ask something short, like "What's in my mod log?"
@@ -90,14 +101,14 @@ Other mods can ask REDagent questions and show you the answers, for example a mo
 
 | What | Where it goes |
 |---|---|
-| Your API key | Stored encrypted with your Windows account, by REDnode. It is only used to talk to Anthropic and is never shown again. **Key** in the chat's footer replaces it |
-| Your questions and REDagent's answers | Sent to Anthropic's API, as with any Claude API use |
+| Provider API key | Stored encrypted by REDnode. The Anthropic key is used with Anthropic; the optional OpenAI-compatible key is sent to the endpoint configured in **Provider**. Keys are not displayed again. |
+| Your questions and REDagent's answers | Sent to the provider selected in **Provider**. The configured server also receives retrieved source excerpts and any game/tool results used in the answer. |
 | What REDagent reads to answer | Also sent to Anthropic: mod logs, values from the game, pictures of overlay windows and of the game's screen, and the files it reads from the apps folders |
 | Everything else | Stays on your PC. REDagent does not send telemetry |
 
 ## What it costs
 
-You pay Anthropic per use. Each answer shows its own cost under it in dim text, next to the chat's running total. The footer shows the chat's total too.
+With Claude, you pay Anthropic per use; each answer shows its cost and the footer shows the running total. The OpenAI-compatible provider currently reports no dollar estimate, so the total is shown as unavailable even when a hosted endpoint charges for usage.
 
 A picture of the game's screen costs about as much as a page of text. REDagent takes one when it needs to see, not on every question.
 
@@ -113,7 +124,8 @@ In our first test, six questions (five on Opus 5.5, one on Sonnet 5.5) cost $0.3
 | You see | Do this |
 |---|---|
 | "REDnode's tools are off" | In the launcher (F10), switch **Allowed** on for REDagent |
-| **Get the Agent SDK** fails | Check your connection and press it again. A partial or mismatched download is thrown away, never used |
+| **Get the Agent SDK** fails | This affects the Claude provider only. Check your connection and press it again. A partial or mismatched download is thrown away, never used |
+| Local model returns an API error | Check the base URL, model ID and that your server supports OpenAI-compatible chat completions with tool calling. Use HTTPS for non-local endpoints |
 | "That does not look like an Anthropic API key" | Copy the whole key. Anthropic keys start with `sk-ant-` |
 | An error about your key or credit | Check the key and your credit at console.anthropic.com, then press **Key** and save the key again |
 | REDagent asks for your key again | The saved key could not be read, for example after a Windows account change. Paste it again |

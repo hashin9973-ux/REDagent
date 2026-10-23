@@ -1,0 +1,29 @@
+name: Local provider checks
+
+on:
+  push:
+    branches:
+      - feat/openai-compatible-local-agent
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check JavaScript syntax
+        run: |
+          node --check redagent/agent.mjs
+          node --check redagent/openai-agent.mjs
+          node --check redagent/local-mcp.mjs
+          node --check redagent/knowledge.mjs
+          node --check redagent/chat.js
+      - name: Run local-provider unit tests
+        run: node --test redagent/test/*.test.mjs

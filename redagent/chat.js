@@ -14,6 +14,7 @@ let current = null; // the assistant message being streamed: { el, text }
 const tools = new Map(); // tool use id -> line element
 const changes = new Map(); // change id -> { els: its "Changed" lines, undone }
 let editingKey = false;
+let editingProvider = false;
 let working = null; // the "WORKING..." line while a turn runs
 
 // ---------- Markdown, small and safe: everything is escaped first ----------
@@ -116,22 +117,28 @@ function setWorking(on) {
 // ---------- views ----------
 
 function show() {
-  // First the Agent SDK, then the key, then the chat.
-  const needSdk = !!state.sdk && state.sdk !== 'ready';
-  const needKey = !needSdk && (!state.hasKey || editingKey);
-  $('sdk-setup').hidden = !needSdk;
-  $('setup').hidden = !needKey;
-  $('chat').hidden = needSdk || needKey;
+  // Claude keeps its SDK/key onboarding; the OpenAI-compatible provider does not need it.
+  const local = state.provider === 'openai-compatible';
+  const needSdk = !local && !!state.sdk && state.sdk !== 'ready';
+  const needProvider = editingProvider;
+  const needKey = !needProvider && !needSdk && !local && (!state.hasKey || editingKey);
+  $('provider-setup').hidden = !needProvider;
+  $('sdk-setup').hidden = needProvider || !needSdk;
+  $('setup').hidden = needProvider || needSdk || !needKey;
+  $('chat').hidden = needProvider || needSdk || needKey;
   $('sdk-get').toggleAttribute('disabled', state.sdk === 'getting');
   $('sdk-get').textContent = state.sdk === 'getting' ? 'Getting...' : 'Get the Agent SDK';
   $('cancel-key').hidden = !state.hasKey;
   $('send').hidden = state.busy;
   $('stop').hidden = !state.busy;
+  $('provider-status').textContent = local ? 'OPENAI-COMPATIBLE MODEL' : 'POWERED BY CLAUDE';
+  $('key-button').hidden = local;
   for (const b of document.querySelectorAll('[data-model]')) {
-    if (b.dataset.model === state.model) b.removeAttribute('variant');
+    b.hidden = local;
+    if (b.dataset.model === state.model && !local) b.removeAttribute('variant');
     else b.setAttribute('variant', 'ghost');
   }
-  $('cost').textContent = `Total $${(state.cost ?? 0).toFixed(3)}`;
+  $('cost').textContent = local ? 'Local · usage not reported' : `Total $${(state.cost ?? 0).toFixed(3)}`;
 }
 
 function send() {
@@ -335,6 +342,36 @@ function changeLine(m) {
 for (const b of document.querySelectorAll('[data-model]')) {
   b.addEventListener('click', () => channel.post({ type: 'model', model: b.dataset.model }));
 }
+function openProviderSettings() {
+  editingProvider = true;
+  $('provider-choice').value = state.provider ?? 'anthropic';
+  $('local-base-url').value = state.baseUrl || 'http://127.0.0.1:5001/v1';
+  $('local-model').value = state.localModel || (state.provider === 'openai-compatible' ? state.model : 'local-model') || 'local-model';
+  $('local-api-key').value = '';
+  $('local-fields').hidden = $('provider-choice').value !== 'openai-compatible';
+  show();
+}
+$('provider-button').addEventListener('click', openProviderSettings);
+$('open-provider-from-key').addEventListener('click', openProviderSettings);
+$('provider-choice').addEventListener('change', () => {
+  $('local-fields').hidden = $('provider-choice').value !== 'openai-compatible';
+});
+$('save-provider').addEventListener('click', () => {
+  const provider = $('provider-choice').value;
+  const baseUrl = $('local-base-url').value.trim();
+  const localModel = $('local-model').value.trim();
+  const apiKey = $('local-api-key').value;
+  if (provider === 'openai-compatible' && (!baseUrl || !localModel)) {
+    add(div('error', 'Enter the API base URL and model name.'));
+    return;
+  }
+  $('local-api-key').value = '';
+  channel.post({ type: 'save-provider', provider, baseUrl, localModel, apiKey });
+});
+$('cancel-provider').addEventListener('click', () => {
+  editingProvider = false;
+  show();
+});
 $('key-button').addEventListener('click', () => {
   editingKey = true;
   show();
@@ -394,6 +431,10 @@ function handle(m) {
       if (m.hasKey && m.tools !== 'ok' && !log.querySelector('.notice.tools')) {
         add(div('notice tools', esc(`REDnode's tools are off: ${m.tools}`)));
       }
+      break;
+    case 'provider-saved':
+      editingProvider = false;
+      show();
       break;
     case 'turn-start':
       state.busy = true;

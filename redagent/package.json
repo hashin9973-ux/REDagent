@@ -2,7 +2,7 @@
   "name": "redagent",
   "version": "0.3.0",
   "private": true,
-  "description": "REDagent: an in-game assistant for REDnode mods, powered by Claude. A REDnode package.",
+  "description": "REDagent: an in-game assistant for REDnode mods with Claude and experimental OpenAI-compatible provider support.",
   "license": "MIT",
   "type": "module",
   "devDependencies": {
