@@ -40,7 +40,7 @@ In the in-game REDagent window, click **Provider** and select **OpenAI-compatibl
 
 - **API base URL:** for a typical local KoboldCpp OpenAI-compatible server, try `http://127.0.0.1:5001/v1` if that is the port you configured. Use the exact base URL exposed by your inference server.
 - **Model name:** use the model ID that the server expects. REDagent does not discover the model ID automatically.
-- **API key:** optional for local servers; when entered, REDnode stores it encrypted. Non-local endpoints must use HTTPS.
+- **API key:** optional for local servers; when entered, REDnode stores it encrypted. Saving with the field blank clears a previously saved local-provider key. Non-local endpoints must use HTTPS.
 - **Tools:** the local agent uses chat-completions function calling and REDnode's MCP tools. The selected model and server must support tool calling correctly.
 - **Project knowledge:** each turn retrieves relevant bundled REDnode guidance and existing mod source into the prompt. This is temporary retrieved context, not automatic model training.
 - **Limitations:** screenshot/vision tools are not forwarded in this provider path. Other mods' budget-limited `agent.ask` questions are disabled while this provider is selected because this endpoint does not provide a dependable dollar-cost measure. Dollar usage is not displayed for local-provider turns.
