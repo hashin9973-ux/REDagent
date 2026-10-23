@@ -17,6 +17,11 @@ test('retrieves relevant source snippets and respects configured limits', (t) =>
     '}',
   ].join('\n'));
   writeFileSync(join(root, 'unrelated.md'), 'A guide about unrelated crafting recipes.');
+  writeFileSync(join(root, 'mods', 'hud-health', 'settings.json'), JSON.stringify({
+    name: 'health HUD settings',
+    apiKey: 'supersecret-test-token-value',
+  }));
+  writeFileSync(join(root, 'mods', 'hud-health', 'private-token.mjs'), "export const token = 'supersecret-test-token-value';");
 
   const result = retrieveKnowledge('create a health HUD with a threshold', {
     roots: [root],
@@ -26,5 +31,6 @@ test('retrieves relevant source snippets and respects configured limits', (t) =>
   });
   assert.match(result, /hud-health/);
   assert.match(result, /threshold/);
+  assert.doesNotMatch(result, /supersecret-test-token-value/);
   assert.ok(result.length <= 2_000);
 });
