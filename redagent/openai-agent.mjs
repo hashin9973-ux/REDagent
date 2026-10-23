@@ -4,9 +4,10 @@
 // depend on Anthropic's Claude Agent SDK. The caller owns tool permissions, file
 // safety, and user confirmations; this module only handles HTTP and the tool loop.
 
-const MAX_TOOL_ROUNDS = 20;
-const MAX_TOOL_RESULT_CHARS = 24_000;
-const MAX_HISTORY_MESSAGES = 48;
+const MAX_TOOL_ROUNDS = 8;
+const MAX_TOOL_RESULT_CHARS = 7_000;
+const MAX_HISTORY_MESSAGES = 40;
+const MAX_HISTORY_CHARS = 24_000;
 
 export function chatCompletionsUrl(baseUrl) {
   const base = String(baseUrl ?? '').trim().replace(/\/+$/, '');
@@ -18,11 +19,28 @@ export function chatCompletionsUrl(baseUrl) {
 
 function compactHistory(history) {
   const items = Array.isArray(history) ? history.filter((m) => m && typeof m.role === 'string') : [];
-  if (items.length <= MAX_HISTORY_MESSAGES) return items;
-  // Start at a user turn, so we do not split an assistant tool-call group from its results.
-  const start = items.length - MAX_HISTORY_MESSAGES;
-  const aligned = items.findIndex((m, i) => i >= start && m.role === 'user');
-  return items.slice(aligned < 0 ? start : aligned);
+  const starts = [];
+  for (let i = 0; i < items.length; i += 1) if (items[i].role === 'user') starts.push(i);
+  const turns = starts.map((start, i) => items.slice(start, starts[i + 1] ?? items.length));
+  const selected = [];
+  let chars = 0;
+  let count = 0;
+  for (let i = turns.length - 1; i >= 0; i -= 1) {
+    const turn = turns[i];
+    const size = turn.reduce((sum, message) => sum + JSON.stringify(message).length, 0);
+    if (selected.length && (chars + size > MAX_HISTORY_CHARS || count + turn.length > MAX_HISTORY_MESSAGES)) break;
+    if (!selected.length && size > MAX_HISTORY_CHARS) {
+      // Keep a compact trace of an unusually large prior turn, never a dangling tool call.
+      const user = turn.find((message) => message.role === 'user');
+      const answer = [...turn].reverse().find((message) =>
+        message.role === 'assistant' && !message.tool_calls?.length && typeof message.content === 'string');
+      return [user, ...(answer ? [{ role: 'assistant', content: answer.content.slice(0, 4_000) }] : [])].filter(Boolean);
+    }
+    selected.unshift(...turn);
+    chars += size;
+    count += turn.length;
+  }
+  return selected;
 }
 
 function errorText(text, status) {
@@ -40,12 +58,19 @@ function jsonSafeSchema(schema) {
   if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
     return { type: 'object', properties: {} };
   }
-  const result = { ...schema };
-  // MCP input schemas often have metadata that some local OpenAI-compatible servers
-  // reject even though it is valid JSON Schema.
-  delete result.$schema;
-  delete result.$id;
-  delete result.title;
+  const clean = (value, depth = 0) => {
+    if (Array.isArray(value)) return value.map((item) => clean(item, depth + 1));
+    if (!value || typeof value !== 'object' || depth > 12) return value;
+    const result = {};
+    for (const [key, item] of Object.entries(value)) {
+      // Strip documentation-only keywords which some lightweight servers reject.
+      if (['$schema', '$id', 'title', 'examples', 'deprecated'].includes(key)) continue;
+      if (key === 'description' && typeof item === 'string') result[key] = item.slice(0, 500);
+      else result[key] = clean(item, depth + 1);
+    }
+    return result;
+  };
+  const result = clean(schema);
   return result.type ? result : { type: 'object', properties: {} };
 }
 
@@ -57,7 +82,7 @@ async function completion({ baseUrl, apiKey, model, messages, tools, signal, onT
     type: 'function',
     function: {
       name: t.name,
-      description: String(t.description ?? '').slice(0, 4000),
+      description: String(t.description ?? '').slice(0, 1_500),
       parameters: jsonSafeSchema(t.inputSchema),
     },
   }));
@@ -181,8 +206,9 @@ export async function runOpenAICompatibleTurn({
     { role: 'user', content: prompt },
   ];
   let lastUsage = null;
+  let generatedToolId = 0;
 
-  for (let round = 0; round < maxToolRounds; round += 1) {
+  for (let round = 0; round < Math.min(MAX_TOOL_ROUNDS, Math.max(1, maxToolRounds)); round += 1) {
     if (signal?.aborted) throw new Error('Stopped.');
     const result = await completion({
       baseUrl, apiKey, model, messages, tools, signal, onText,
@@ -197,7 +223,8 @@ export async function runOpenAICompatibleTurn({
     }
 
     for (const call of toolCalls) {
-      const id = call.id || `local-${Date.now()}-${round}-${messages.length}`;
+      const id = call.id || `local-${Date.now()}-${round}-${++generatedToolId}`;
+      call.id = id; // Keep the assistant tool_calls id paired with the tool result.
       const name = call.function?.name ?? '';
       let args;
       let output;
@@ -224,10 +251,14 @@ export async function runOpenAICompatibleTurn({
       }
       const text = toolResultText(output);
       onToolDone?.({ id, name, error: isError });
+      const outputText = isError ? `Tool error: ${text}` : text;
+      const boundedOutput = outputText.length > MAX_TOOL_RESULT_CHARS
+        ? outputText.slice(0, MAX_TOOL_RESULT_CHARS) + '\n[Tool result truncated. Ask for a narrower range if more detail is needed.]'
+        : outputText;
       messages.push({
         role: 'tool',
         tool_call_id: id,
-        content: (isError ? `Tool error: ${text}` : text).slice(0, MAX_TOOL_RESULT_CHARS),
+        content: boundedOutput,
       });
     }
   }
