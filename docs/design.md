@@ -363,3 +363,38 @@ Each phase ends with an in-game test, as in REDnode.
 | **C4 Polish** | Chat history kept on disk and a list of earlier chats; a capture of the game's frame (native, REDnode's `game_image`); what the tests teach (the Test timer app, a "waiting for you" line). Prompt caching turned out to be automatic (C2) | A chat survives a restart of the game; REDagent describes the game's screen |
 | **C5 Agent API for mods** | A `rednode` API for other mods to use REDagent, brokered by the host: for example `agent.ask(prompt, { context })`, streaming the answer back. A mod must ask for the `agent` permission, the player grants it in the launcher, and spending limits apply per mod, since every call costs the player | A sample mod asks REDagent a question and shows the answer; a mod without the permission is refused |
 | **C6 REDagent in REDcode** | REDagent's agent split into a core package shared by two front ends: the in-game chat, and a REDagent view in REDcode's activity bar, beside REDnode's views. In the editor, edits show in VS Code's diff editor. The same briefing, kernel tools and settings. REDbridge's WolvenKit editing operations, exposed as MCP tools by REDbridge (being added in the REDcode session), give the same agent archive and asset work | From REDcode: "make a mod that ..." produces a working mod in the running game, with edits reviewed in VS Code |
+
+
+## Fork work: OpenAI-compatible provider (experimental)
+
+This section describes the provider implementation in the `hashin9973-ux/REDagent` fork. The original Claude provider remains the default and retains its Claude Agent SDK path.
+
+### Pieces
+
+| File | Role |
+|---|---|
+| `redagent/openai-agent.mjs` | Node built-in HTTP/SSE client for OpenAI-compatible chat completions; tool-call assembly, tool result loop, bounded per-turn output, and bounded prior-turn history |
+| `redagent/local-mcp.mjs` | Calls REDnode's stateless Streamable HTTP MCP endpoint with the headers returned by `kernel.mcp()`; discovers tools and forwards read/tool results |
+| `redagent/knowledge.mjs` | Lexical retrieval over bundled REDnode guidance and existing mod source. It excludes symlinks, node_modules, runtime-data folders, most JSON settings, and files that appear to contain credentials; indexing is bounded |
+| `redagent/agent.mjs` | Provider selection, chat context persistence, retrieval, local read/search/write tools, and reuse of the existing approval/diff/backup/Undo path |
+
+### Local-provider behavior
+
+- Select **Provider → OpenAI-compatible API (local or hosted)**. Set the endpoint base URL and the exact model ID expected by the server. An API key is optional and stored through REDnode's encrypted secrets API.
+- The default example base URL is `http://127.0.0.1:5001/v1`; it is a placeholder, not a claim about every KoboldCpp configuration. Non-loopback endpoints require HTTPS.
+- The client accepts streamed SSE responses and ordinary JSON chat-completion responses, handles one or more function calls, and caps the loop at eight tool rounds. Prior turns and tool outputs are bounded to limit context growth.
+- The local agent exposes bounded file read/search tools and tools reported by the REDnode MCP server. Existing `canUseTool` policy is reused: known mutating game calls require player confirmation, unknown tool names are denied, and file writes go through `confirmChange` with diff, backup and Undo. Reads/writes may not follow symlinks or access REDagent's own package directory.
+- Each user turn performs deterministic keyword retrieval across the shipped briefing, REDnode guide and candidate mod source. Retrieved content is temporary prompt context; this is not fine-tuning and does not update model weights.
+- Images are excluded from the local provider's tool list for now. The original mod-facing `agent.ask` path is refused in local mode: its per-mod controls enforce dollar-based budgets and the compatible endpoint does not reliably provide a billable dollar cost.
+
+### Validation status
+
+The fork adds a GitHub Actions workflow, `.github/workflows/local-provider-tests.yml`, which runs `node --check` on the touched JavaScript modules and Node's built-in test runner for the endpoint/tool loop, MCP client and retrieval. These tests use test-only fake HTTP responses; they do not prove interoperability with a live KoboldCpp server or REDnode inside Cyberpunk. **An in-game smoke test is still required before a release.**
+
+Minimum manual smoke test:
+1. Deploy REDnode 0.32.1 or later and this fork to a test game folder.
+2. Open **Provider**, configure a reachable OpenAI-compatible endpoint and model ID, and save.
+3. Ask a read-only question that requires `gameapi_lookup` or `logs`; confirm the tool call succeeds and the answer uses the returned result.
+4. Ask it to create a tiny overlay mod. Deny one diff, then retry and allow it; verify the denied change did not occur and the allowed change has an Undo entry.
+5. Introduce a harmless error in that test mod and ask REDagent to repair it; check the runtime log and hot reload rather than trusting the model's claim.
+6. Confirm that mutating game tools display an approval card and that the local provider reports no dollar cost estimate.
