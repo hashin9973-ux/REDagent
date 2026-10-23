@@ -15,6 +15,10 @@
   .setup { display: flex; flex-direction: column; gap: 12px; font-size: 15px; line-height: 1.45; }
   .setup p { margin: 0; }
   .setup .fine { color: var(--rn-dim); font-size: 13px; }
+  .setup label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
+  .setup select, .setup input { box-sizing: border-box; width: 100%; padding: 8px; color: var(--rn-fg); background: var(--rn-panel); border: 1px solid var(--rn-line); font: inherit; }
+  .setup select:focus, .setup input:focus { outline: 1px solid var(--rn-accent); }
+  .setup .provider-row { display: flex; gap: 8px; flex-wrap: wrap; }
   .setup .fine.error { color: var(--rn-danger, #ff5a5a); }
   .row { display: flex; align-items: center; gap: 8px; }
 
@@ -99,7 +103,7 @@
 </head>
 <body>
   <rn-window title="REDagent" draggable>
-    <span class="status" slot="status">POWERED BY CLAUDE</span>
+    <span class="status" id="provider-status" slot="status">MODEL PROVIDER</span>
 
     <div class="setup" id="sdk-setup" hidden>
       <p>REDagent runs on Anthropic's <b>Claude Agent SDK</b>. It is not in REDagent's download, so get it once, here: about 140 MB from Anthropic's own packages on npm.</p>
@@ -108,11 +112,36 @@
       <p class="fine" id="sdk-progress"></p>
     </div>
 
+    <div class="setup" id="provider-setup" hidden>
+      <p>Choose the model provider. OpenAI-compatible endpoints include KoboldCpp, LM Studio, and vLLM when their chat-completions API is enabled.</p>
+      <label for="provider-choice">Provider
+        <select id="provider-choice">
+          <option value="anthropic">Anthropic Claude</option>
+          <option value="openai-compatible">OpenAI-compatible API (local or hosted)</option>
+        </select>
+      </label>
+      <div id="local-fields" class="setup">
+        <label for="local-base-url">API base URL
+          <input id="local-base-url" type="url" value="http://127.0.0.1:5001/v1" placeholder="http://127.0.0.1:5001/v1" autocomplete="url">
+        </label>
+        <label for="local-model">Model name
+          <input id="local-model" type="text" value="local-model" placeholder="The model ID your server expects" autocomplete="off">
+        </label>
+        <label for="local-api-key">API key (optional)
+          <input id="local-api-key" type="password" placeholder="Leave blank if the server needs no key" autocomplete="off">
+        </label>
+        <p class="fine">The optional API key is stored encrypted by REDnode. The configured endpoint receives your prompts, relevant mod code, and tool results. Use a trusted endpoint only.</p>
+      </div>
+      <div class="provider-row"><rn-button id="save-provider">Save provider</rn-button><rn-button id="cancel-provider" variant="ghost">Cancel</rn-button></div>
+      <p class="fine">This fork's local agent does not yet send screenshots to vision models, and local token usage is not converted into a dollar cost.</p>
+    </div>
+
     <div class="setup" id="setup" hidden>
       <p>REDagent answers questions about your REDnode mods and the game while you play. It uses Claude with <b>your own Anthropic API key</b>, and you pay Anthropic for what you use.</p>
       <p class="fine">Get a key at console.anthropic.com, under API keys. It is stored encrypted on this PC, used only to talk to Anthropic, and never shown again.</p>
       <rn-input id="key" label="Anthropic API key" type="password" placeholder="sk-ant-..."></rn-input>
       <div class="row"><rn-button id="save-key">Save key</rn-button><rn-button id="cancel-key" variant="ghost" hidden>Cancel</rn-button></div>
+      <p class="fine"><rn-button id="open-provider-from-key" variant="ghost">Configure another provider</rn-button></p>
     </div>
 
     <div class="chat" id="chat" hidden>
@@ -139,6 +168,7 @@
       <span class="cost" id="cost" title="What this chat has cost so far">Total $0.000</span>
       <rn-button id="history-button" variant="ghost" title="Earlier chats">Chats</rn-button>
       <rn-button id="new" variant="ghost" title="Start a new chat">New</rn-button>
+      <rn-button id="provider-button" variant="ghost" title="Configure model provider">Provider</rn-button>
       <rn-button id="key-button" variant="ghost">Key</rn-button>
     </div>
   </rn-window>
