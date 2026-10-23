@@ -269,6 +269,7 @@ async function status() {
     sdk: query ? 'ready' : sdkJob ? 'getting' : 'missing',
     provider: settings.provider,
     baseUrl: settings.localBaseUrl,
+    localModel: settings.localModel,
     hasKey: settings.provider === 'openai-compatible' ? true : !!(await secrets.get(KEY)),
     model: settings.provider === 'openai-compatible' ? settings.localModel : settings.model,
     models: MODELS,
