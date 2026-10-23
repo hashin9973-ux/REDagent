@@ -660,7 +660,7 @@ function listLocalFiles(startDir, maxFiles = 1200) {
     for (const entry of entries) {
       if (entry.name === '.git' || entry.name === 'node_modules' || entry.name === '.cache') continue;
       const full = join(dir, entry.name);
-      if (!insideApps(full, APPS_DIRS[0]) || entry.isSymbolicLink()) continue;
+      if (!APPS_DIRS.some((appsDir) => insideApps(full, appsDir)) || entry.isSymbolicLink()) continue;
       if (resolve(full) === resolve(pkg.dir)) continue;
       if (entry.isDirectory()) stack.push(full);
       else if (entry.isFile()) found.push(full);
