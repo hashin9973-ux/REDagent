@@ -608,6 +608,15 @@ function safeAppsPath(value, cwd = APPS_DIRS[0]) {
     return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
   });
   if (!root) throw new Error('REDagent may only access files inside the REDnode apps folders.');
+  const ownPackage = relative(resolve(pkg.dir), full);
+  if (ownPackage === '' || (!ownPackage.startsWith('..') && !isAbsolute(ownPackage))) {
+    throw new Error('REDagent local tools may not read or write REDagent itself.');
+  }
+  try {
+    if (lstatSync(root).isSymbolicLink()) throw new Error('Symlink apps roots are not allowed.');
+  } catch (err) {
+    if (err?.code !== 'ENOENT') throw err;
+  }
 
   // Do not follow a symlink from an allowed apps folder to an arbitrary path on disk.
   let cursor = resolve(root);
@@ -652,6 +661,7 @@ function listLocalFiles(startDir, maxFiles = 1200) {
       if (entry.name === '.git' || entry.name === 'node_modules' || entry.name === '.cache') continue;
       const full = join(dir, entry.name);
       if (!insideApps(full, APPS_DIRS[0]) || entry.isSymbolicLink()) continue;
+      if (resolve(full) === resolve(pkg.dir)) continue;
       if (entry.isDirectory()) stack.push(full);
       else if (entry.isFile()) found.push(full);
       if (found.length >= maxFiles) break;
@@ -1028,6 +1038,9 @@ channel.on(async (msg) => {
           let parsed;
           try { parsed = new URL(baseUrl); } catch { throw new Error('Enter a valid OpenAI-compatible API base URL.'); }
           if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('The API URL must use HTTP or HTTPS.');
+          if (parsed.search || parsed.hash) throw new Error('Put authentication in the API key field, not the URL query or fragment.');
+          const isLoopback = ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname.toLowerCase());
+          if (parsed.protocol === 'http:' && !isLoopback) throw new Error('Use HTTPS for non-local endpoints so the API key is not sent in cleartext.');
           if (!localModel) throw new Error('Enter the model name expected by your inference server.');
           settings.localBaseUrl = baseUrl;
           settings.localModel = localModel;
