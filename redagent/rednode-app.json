@@ -3,7 +3,7 @@
   "name": "REDagent",
   "version": "0.3.0",
   "author": "Edgemodders",
-  "description": "An assistant for REDnode mods, powered by Claude. Ask about your mods, their logs and the game while you play, and let other mods ask it questions. Needs your own Anthropic API key.",
+  "description": "An assistant for REDnode mods. Uses Claude by default, with an experimental OpenAI-compatible provider in this fork.",
   "entry": "index.html",
   "main": "agent.mjs",
   "isolation": "process",
