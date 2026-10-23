@@ -1052,6 +1052,7 @@ channel.on(async (msg) => {
           settings.localModel = localModel;
           const apiKey = String(msg.apiKey ?? '').trim();
           if (apiKey) await secrets.set(LOCAL_KEY, apiKey);
+          else await secrets.delete(LOCAL_KEY);
         }
         settings.provider = provider;
         saveSettings();
