@@ -346,7 +346,7 @@ function openProviderSettings() {
   editingProvider = true;
   $('provider-choice').value = state.provider ?? 'anthropic';
   $('local-base-url').value = state.baseUrl || 'http://127.0.0.1:5001/v1';
-  $('local-model').value = state.provider === 'openai-compatible' ? (state.model || 'local-model') : 'local-model';
+  $('local-model').value = state.localModel || (state.provider === 'openai-compatible' ? state.model : 'local-model') || 'local-model';
   $('local-api-key').value = '';
   $('local-fields').hidden = $('provider-choice').value !== 'openai-compatible';
   show();
